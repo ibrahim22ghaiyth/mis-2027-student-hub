@@ -78,6 +78,14 @@ async function checkPassword(password, stored) {
   }
   return false;
 }
+async function makePasswordHash(password) {
+  const salt = hex(crypto.getRandomValues(new Uint8Array(16)));
+  return `sha256$${salt}$${await sha256(salt + password)}`;
+}
+function validatePassword(password, username = '') {
+  if (String(password || '').length < 14) throw new Error('كلمة المرور لازم تكون 14 حرفاً على الأقل');
+  if (username && String(password).toLowerCase().includes(String(username).toLowerCase())) throw new Error('كلمة المرور لا يصير تحتوي اسم المستخدم');
+}
 async function getSession(req, db) {
   const token = cookie(req, 'mis_session');
   if (!/^[a-f0-9]{64}$/.test(token)) return null;
@@ -188,6 +196,61 @@ async function handleApi(req, env, path) {
   if (req.method === 'POST' && path === '/api/auth/logout') {
     await run(db, 'DELETE FROM sessions WHERE token_hash=?', session.token_hash);
     return json({ ok: true }, 200, { 'set-cookie': 'mis_session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0' });
+  }
+  if (req.method === 'POST' && path === '/api/auth/password') {
+    const body = await readJson(req);
+    const admin = await first(db, 'SELECT * FROM admins WHERE id=?', session.admin_id);
+    if (!admin || !(await checkPassword(escLike(body.old_password), admin.password_hash))) return err(400, 'كلمة المرور الحالية غير صحيحة');
+    const nextPassword = escLike(body.new_password).slice(0, 250);
+    validatePassword(nextPassword, admin.username);
+    await run(db, 'UPDATE admins SET password_hash=? WHERE id=?', await makePasswordHash(nextPassword), admin.id);
+    await run(db, 'DELETE FROM sessions WHERE admin_id=? AND token_hash<>?', admin.id, session.token_hash);
+    return json({ ok: true });
+  }
+  if (req.method === 'POST' && path === '/api/admin/users') {
+    if ((session.role || 'admin') !== 'admin') return err(403, 'فقط الأدمن الرئيسي يستطيع إضافة مستخدمين');
+    const body = await readJson(req);
+    const username = escLike(body.username).slice(0, 50);
+    const password = escLike(body.password).slice(0, 250);
+    const role = ['admin', 'user'].includes(body.role) ? body.role : 'user';
+    if (!/^[A-Za-z0-9_.-]{3,50}$/.test(username)) return err(400, 'اسم المستخدم: 3-50 حرف إنجليزي/رقم أو _ - .');
+    validatePassword(password, username);
+    await run(db, 'INSERT INTO admins(username,password_hash,role) VALUES(?,?,?)', username, await makePasswordHash(password), role);
+    return json({ ok: true }, 201);
+  }
+  if (req.method === 'PATCH' && path === '/api/admin/users') {
+    const body = await readJson(req);
+    const uid = intVal(body.id);
+    const target = await first(db, 'SELECT * FROM admins WHERE id=?', uid);
+    if (!target) return err(404, 'المستخدم غير موجود');
+    const isSelf = uid === session.admin_id;
+    const isRoot = (session.role || 'admin') === 'admin';
+    if (!isSelf && !isRoot) return err(403, 'فقط الأدمن الرئيسي يستطيع تعديل مستخدمين آخرين');
+    const updates = {};
+    if (body.role) {
+      if (!isRoot) return err(403, 'فقط الأدمن الرئيسي يستطيع تغيير الأدوار');
+      if (!['admin', 'user'].includes(body.role)) return err(400, 'الدور غير صحيح');
+      updates.role = body.role;
+    }
+    if (body.password) {
+      const nextPassword = escLike(body.password).slice(0, 250);
+      validatePassword(nextPassword, target.username);
+      updates.password_hash = await makePasswordHash(nextPassword);
+    }
+    const cols = Object.keys(updates);
+    if (!cols.length) return err(400, 'ماكو تغييرات');
+    await run(db, `UPDATE admins SET ${cols.map(c => `${c}=?`).join(',')} WHERE id=?`, ...cols.map(c => updates[c]), uid);
+    if (updates.password_hash) await run(db, isSelf ? 'DELETE FROM sessions WHERE admin_id=? AND token_hash<>?' : 'DELETE FROM sessions WHERE admin_id=?', ...(isSelf ? [uid, session.token_hash] : [uid]));
+    return json({ ok: true });
+  }
+  let userDelete = path.match(/^\/api\/admin\/users\/(\d+)$/);
+  if (userDelete && req.method === 'DELETE') {
+    if ((session.role || 'admin') !== 'admin') return err(403, 'فقط الأدمن الرئيسي يستطيع حذف المستخدمين');
+    const uid = intVal(userDelete[1]);
+    if (uid === session.admin_id) return err(400, 'ما تكدر تحذف حسابك الحالي');
+    await run(db, 'DELETE FROM sessions WHERE admin_id=?', uid);
+    await run(db, 'DELETE FROM admins WHERE id=?', uid);
+    return json({ ok: true });
   }
   if (req.method === 'PATCH' && path === '/api/admin/requests') {
     const body = await readJson(req);
