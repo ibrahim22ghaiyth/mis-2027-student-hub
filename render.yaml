@@ -1,0 +1,18 @@
+# Render.com — خطة مجانية (Free Instance)
+# ارفع المشروع إلى GitHub ثم: Dashboard → New → Blueprint → اختر هذا ال Repo
+services:
+  - type: web
+    name: mis-2027
+    runtime: docker
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: "10000"
+      - key: MIS_BIND_ALL
+        value: "1"
+      - key: FORCE_HTTPS
+        value: "1"
+    autoDeploy: true
