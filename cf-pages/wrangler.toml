@@ -1,0 +1,8 @@
+name = "ism27"
+compatibility_date = "2026-09-01"
+pages_build_output_dir = "."
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ism27-db"
+database_id = "38eabbdf-9019-4b48-94b4-2d8745587266"

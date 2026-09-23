@@ -6,5 +6,7 @@ uploads/*
 !uploads/.gitkeep
 static-site/
 ism27-site/
+cf-pages/.wrangler/
+cf-pages/.wrangler-local/
 .env
 .DS_Store

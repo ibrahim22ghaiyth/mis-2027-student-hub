@@ -1,0 +1,19 @@
+{
+  "id":"/",
+  "name":"MIS 2027 - منصة الطلبة | جامعة تكنولوجيا المعلومات والاتصالات",
+  "short_name":"MIS 2027",
+  "description":"محاضرات وشروحات وتبليغات طلبة قسم إدارة أنظمة المعلوماتية - كلية معلوماتية الأعمال",
+  "start_url":"/",
+  "scope":"/",
+  "display":"standalone",
+  "orientation":"any",
+  "background_color":"#111315",
+  "theme_color":"#111315",
+  "categories":["education","productivity"],
+  "lang":"ar",
+  "dir":"rtl",
+  "icons":[
+    {"src":"/icon-192.png","sizes":"192x192","type":"image/png","purpose":"any maskable"},
+    {"src":"/icon-512.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}
+  ]
+}
