@@ -83,7 +83,7 @@ async function makePasswordHash(password) {
   return `sha256$${salt}$${await sha256(salt + password)}`;
 }
 function validatePassword(password, username = '') {
-  if (String(password || '').length < 14) throw new Error('كلمة المرور لازم تكون 14 حرفاً على الأقل');
+  if (String(password || '').length < 8) throw new Error('كلمة المرور لازم تكون 8 أحرف على الأقل');
   if (username && String(password).toLowerCase().includes(String(username).toLowerCase())) throw new Error('كلمة المرور لا يصير تحتوي اسم المستخدم');
 }
 async function getSession(req, db) {
@@ -295,3 +295,4 @@ export async function onRequest(context) {
     return err(400, e.message || 'تعذر تنفيذ الطلب');
   }
 }
+
