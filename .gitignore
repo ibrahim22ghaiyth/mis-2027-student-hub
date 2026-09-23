@@ -8,5 +8,6 @@ static-site/
 ism27-site/
 cf-pages/.wrangler/
 cf-pages/.wrangler-local/
+cf-pages/seed.sql
 .env
 .DS_Store
