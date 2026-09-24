@@ -1,8 +1,8 @@
-const VERSION='mis-2027-offline-v12';
+const VERSION='mis-2027-offline-v13';
 const STATIC_CACHE=`${VERSION}-static`;
 const DATA_CACHE=`${VERSION}-data`;
 const STUDY_CACHE=`${VERSION}-study`;
-const STATIC=['/','/index.html','/styles.css?v=20260924g-mobile-files','/app.js?v=20260924g-mobile-files','/manifest.webmanifest?v=20260924g-mobile-files','/favicon.svg?v=20260924g-mobile-files','/mis-logo.png','/icon-192.png','/icon-512.png'];
+const STATIC=['/','/index.html','/styles.css?v=20260924h-pdf-preview','/app.js?v=20260924h-pdf-preview','/manifest.webmanifest?v=20260924h-pdf-preview','/favicon.svg?v=20260924h-pdf-preview','/mis-logo.png','/icon-192.png','/icon-512.png'];
 self.addEventListener('install',event=>{event.waitUntil(caches.open(STATIC_CACHE).then(c=>c.addAll(STATIC)).then(()=>self.skipWaiting()))});
 self.addEventListener('activate',event=>{event.waitUntil((async()=>{for(const key of await caches.keys())if(![STATIC_CACHE,DATA_CACHE,STUDY_CACHE].includes(key))await caches.delete(key);await self.clients.claim()})())});
 async function networkFirst(req,cacheName){const cache=await caches.open(cacheName);try{const res=await fetch(req);if(res&&res.ok)cache.put(req,res.clone());return res}catch{const hit=await cache.match(req);if(hit)return hit;throw new Error('offline')}}
