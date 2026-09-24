@@ -4,7 +4,7 @@ const MAX_FILE_BYTES = 24 * 1024 * 1024;
 const ENTITIES = {
   subjects: ['title_ar','title_en','description','color','sort_order','is_published'],
   lectures: ['subject_id','title','section','number','description','file_path','file_name','file_size','file_mime','file_data'],
-  explanations: ['subject_id','lecture_id','number','title','summary','content','file_path','file_name','file_size','file_mime','file_data','is_published'],
+  explanations: ['subject_id','lecture_id','number','title','contributor','summary','content','file_path','file_name','file_size','file_mime','file_data','is_published'],
   announcements: ['title','body','source','pinned','is_active','expires_at'],
   exams: ['subject_id','title','exam_date','notes','is_active'],
 };
@@ -170,7 +170,7 @@ async function deleteStoredFile(env, row) {
     await env.FILES.delete(row.file_path.slice(3));
   }
 }
-async function fileResponse(env, row, download = false) {
+async function fileResponse(env, row, download = false, print = false) {
   if (!row || (!row.file_data && !row.file_path?.startsWith?.('kv:'))) return err(404, 'الملف غير موجود');
   let body = null;
   if (row.file_path?.startsWith?.('kv:') && env.FILES) {
@@ -179,6 +179,12 @@ async function fileResponse(env, row, download = false) {
     body = base64Bytes(row.file_data);
   }
   if (!body) return err(404, 'الملف غير موجود');
+  if (print && /^text\/html\b/i.test(row.file_mime || '')) {
+    let html = new TextDecoder().decode(body instanceof ArrayBuffer ? body : body.buffer);
+    const script = `<script>window.addEventListener('load',()=>setTimeout(()=>window.print(),450));</script>`;
+    html = /<\/body>/i.test(html) ? html.replace(/<\/body>/i, `${script}</body>`) : `${html}${script}`;
+    body = html;
+  }
   const headers = {
     'content-type': row.file_mime || 'application/octet-stream',
     'content-disposition': `${download ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(row.file_name || 'file')}`,
@@ -205,12 +211,14 @@ async function handleApi(req, env, path) {
   if (req.method === 'GET' && path.startsWith('/api/files/')) {
     const id = intVal(path.split('/').pop());
     const row = await first(db, 'SELECT l.* FROM lectures l JOIN subjects s ON s.id=l.subject_id WHERE l.id=? AND s.is_published=1', id);
-    return fileResponse(env, row, new URL(req.url).searchParams.get('download') === '1');
+    const url = new URL(req.url);
+    return fileResponse(env, row, url.searchParams.get('download') === '1', url.searchParams.get('print') === '1');
   }
   if (req.method === 'GET' && (path.startsWith('/api/explanation-files/') || path.startsWith('/api/explanation-preview/'))) {
     const id = intVal(path.split('/').pop());
     const row = await first(db, 'SELECT e.* FROM explanations e JOIN subjects s ON s.id=e.subject_id WHERE e.id=? AND e.is_published=1 AND s.is_published=1', id);
-    return fileResponse(env, row, path.startsWith('/api/explanation-files/') && new URL(req.url).searchParams.get('download') === '1');
+    const url = new URL(req.url);
+    return fileResponse(env, row, path.startsWith('/api/explanation-files/') && url.searchParams.get('download') === '1', url.searchParams.get('print') === '1');
   }
   if (req.method === 'GET' && path === '/api/admin/data') {
     const s = await getSession(req, db);

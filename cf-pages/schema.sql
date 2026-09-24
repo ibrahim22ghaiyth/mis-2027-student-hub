@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS explanations(
   lecture_id INTEGER,
   number INTEGER DEFAULT 1,
   title TEXT NOT NULL,
+  contributor TEXT DEFAULT '',
   summary TEXT DEFAULT '',
   content TEXT NOT NULL DEFAULT '',
   file_path TEXT DEFAULT '',
