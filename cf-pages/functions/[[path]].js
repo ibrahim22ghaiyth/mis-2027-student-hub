@@ -1,5 +1,6 @@
 const SESSION_TTL = 8 * 3600;
-const MAX_JSON = 7 * 1024 * 1024;
+const MAX_JSON = 34 * 1024 * 1024;
+const MAX_FILE_BYTES = 24 * 1024 * 1024;
 const ENTITIES = {
   subjects: ['title_ar','title_en','description','color','sort_order','is_published'],
   lectures: ['subject_id','title','section','number','description','file_path','file_name','file_size','file_mime','file_data'],
@@ -26,6 +27,7 @@ const json = (obj, status = 200, headers = {}) => new Response(JSON.stringify(ob
 });
 const err = (status, message) => json({ error: message }, status);
 const escLike = s => String(s ?? '').slice(0, 3000).trim();
+const cleanBase64 = s => String(s ?? '').replace(/^data:[^,]+,/, '').replace(/\s+/g, '');
 const intVal = v => Number.isFinite(Number(v)) ? Math.trunc(Number(v)) : 0;
 const nowSec = () => Math.floor(Date.now() / 1000);
 const hex = bytes => [...new Uint8Array(bytes)].map(b => b.toString(16).padStart(2, '0')).join('');
@@ -114,11 +116,14 @@ function normalizeEntity(entity, body, editing = false) {
   if (body.file_base64 && ['lectures','explanations'].includes(entity)) {
     const fileName = escLike(body.file_name || 'file');
     const mime = fileName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : fileName.toLowerCase().match(/\.html?$/) ? 'text/html' : 'application/octet-stream';
-    out.file_path = 'd1';
+    const data = cleanBase64(body.file_base64);
+    const size = Math.floor((data.length * 3) / 4);
+    if (!data || size > MAX_FILE_BYTES) throw new Error('حجم الملف أكبر من الحد المجاني المتاح حالياً: 24 MB');
+    out.file_path = 'pending';
     out.file_name = fileName;
     out.file_mime = mime;
-    out.file_data = escLike(body.file_base64);
-    out.file_size = Math.floor((out.file_data.length * 3) / 4);
+    out.file_data = data;
+    out.file_size = size;
   }
   for (const key of REQUIRED[entity] || []) {
     if (!editing && !String(out[key] ?? '').trim()) throw new Error(`الحقل مطلوب: ${key}`);
@@ -141,15 +146,46 @@ async function adminData(db, session) {
   data.users = await all(db, 'SELECT id,username,role FROM admins ORDER BY id');
   return { username: session.username, role: session.role || 'admin', csrf: session.csrf, data };
 }
-function fileResponse(row, download = false) {
-  if (!row || !row.file_data) return err(404, 'الملف غير موجود');
-  const bytes = Uint8Array.from(atob(row.file_data), c => c.charCodeAt(0));
+function base64Bytes(data) {
+  const binary = atob(cleanBase64(data));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+async function storeUploadedFile(env, entity, id, out) {
+  if (!out.file_data || !['lectures','explanations'].includes(entity)) return out;
+  if (env.FILES) {
+    const key = `${entity}/${id}/${crypto.randomUUID()}-${out.file_name || 'file'}`;
+    await env.FILES.put(key, base64Bytes(out.file_data).buffer, {
+      metadata: { file_name: out.file_name || 'file', file_mime: out.file_mime || 'application/octet-stream', file_size: String(out.file_size || 0) },
+    });
+    await run(env.DB, `UPDATE ${entity} SET file_path=?, file_data='' WHERE id=?`, `kv:${key}`, id);
+    return { ...out, file_path: `kv:${key}`, file_data: '' };
+  }
+  await run(env.DB, `UPDATE ${entity} SET file_path=? WHERE id=?`, 'd1', id);
+  return { ...out, file_path: 'd1' };
+}
+async function deleteStoredFile(env, row) {
+  if (env.FILES && row?.file_path?.startsWith?.('kv:')) {
+    await env.FILES.delete(row.file_path.slice(3));
+  }
+}
+async function fileResponse(env, row, download = false) {
+  if (!row || (!row.file_data && !row.file_path?.startsWith?.('kv:'))) return err(404, 'الملف غير موجود');
+  let body = null;
+  if (row.file_path?.startsWith?.('kv:') && env.FILES) {
+    body = await env.FILES.get(row.file_path.slice(3), 'arrayBuffer');
+  } else if (row.file_data) {
+    body = base64Bytes(row.file_data);
+  }
+  if (!body) return err(404, 'الملف غير موجود');
   const headers = {
     'content-type': row.file_mime || 'application/octet-stream',
     'content-disposition': `${download ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(row.file_name || 'file')}`,
     'cache-control': 'public, max-age=3600',
+    'x-content-type-options': 'nosniff',
   };
-  return new Response(bytes, { headers });
+  return new Response(body, { headers });
 }
 async function handleApi(req, env, path) {
   const db = env.DB;
@@ -169,12 +205,12 @@ async function handleApi(req, env, path) {
   if (req.method === 'GET' && path.startsWith('/api/files/')) {
     const id = intVal(path.split('/').pop());
     const row = await first(db, 'SELECT l.* FROM lectures l JOIN subjects s ON s.id=l.subject_id WHERE l.id=? AND s.is_published=1', id);
-    return fileResponse(row, new URL(req.url).searchParams.get('download') === '1');
+    return fileResponse(env, row, new URL(req.url).searchParams.get('download') === '1');
   }
   if (req.method === 'GET' && (path.startsWith('/api/explanation-files/') || path.startsWith('/api/explanation-preview/'))) {
     const id = intVal(path.split('/').pop());
     const row = await first(db, 'SELECT e.* FROM explanations e JOIN subjects s ON s.id=e.subject_id WHERE e.id=? AND e.is_published=1 AND s.is_published=1', id);
-    return fileResponse(row, path.startsWith('/api/explanation-files/') && new URL(req.url).searchParams.get('download') === '1');
+    return fileResponse(env, row, path.startsWith('/api/explanation-files/') && new URL(req.url).searchParams.get('download') === '1');
   }
   if (req.method === 'GET' && path === '/api/admin/data') {
     const s = await getSession(req, db);
@@ -267,6 +303,10 @@ async function handleApi(req, env, path) {
   if (!match) return err(404, 'المسار غير موجود');
   const [, entity, rawId] = match;
   if (req.method === 'DELETE' && rawId) {
+    if (['lectures','explanations'].includes(entity)) {
+      const old = await first(db, `SELECT file_path FROM ${entity} WHERE id=?`, intVal(rawId));
+      await deleteStoredFile(env, old);
+    }
     await run(db, `DELETE FROM ${entity} WHERE id=?`, intVal(rawId));
     return json({ ok: true });
   }
@@ -274,15 +314,24 @@ async function handleApi(req, env, path) {
   const body = await readJson(req);
   const id = rawId ? intVal(rawId) : null;
   const data = normalizeEntity(entity, body, !!id);
+  const uploadedFileData = data.file_data;
+  if (uploadedFileData && env.FILES) data.file_data = '';
   const cols = Object.keys(data);
   if (!cols.length) return err(400, 'ماكو تغييرات');
   if (id) {
+    if (uploadedFileData && ['lectures','explanations'].includes(entity)) {
+      const old = await first(db, `SELECT file_path FROM ${entity} WHERE id=?`, id);
+      await deleteStoredFile(env, old);
+    }
     await run(db, `UPDATE ${entity} SET ${cols.map(c => `${c}=?`).join(',')} WHERE id=?`, ...cols.map(c => data[c]), id);
+    if (uploadedFileData) await storeUploadedFile(env, entity, id, { ...data, file_data: uploadedFileData });
     return json({ ok: true, id });
   }
   const placeholders = cols.map(() => '?').join(',');
   const result = await run(db, `INSERT INTO ${entity}(${cols.join(',')}) VALUES(${placeholders})`, ...cols.map(c => data[c]));
-  return json({ ok: true, id: result.meta?.last_row_id }, 201);
+  const newId = result.meta?.last_row_id;
+  if (uploadedFileData) await storeUploadedFile(env, entity, newId, { ...data, file_data: uploadedFileData });
+  return json({ ok: true, id: newId }, 201);
 }
 
 export async function onRequest(context) {

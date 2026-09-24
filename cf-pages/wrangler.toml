@@ -6,3 +6,7 @@ pages_build_output_dir = "."
 binding = "DB"
 database_name = "ism27-db"
 database_id = "38eabbdf-9019-4b48-94b4-2d8745587266"
+
+[[kv_namespaces]]
+binding = "FILES"
+id = "fc18c2409d184fb59f9a8e785c44ceba"
